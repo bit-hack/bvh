@@ -81,9 +81,26 @@ struct bvh_t {
   // move an existing node in the tree
   void move(index_t index, const aabb_t &aabb);
 
+  // return a nodes user data
+  void *user_data(index_t index) const {
+    assert(index >= 0 && index < _nodes.size());
+    return _nodes[index].user_data;
+  }
+
   // get a node from the tree
   const node_t &get(index_t index) const {
+    assert(index >= 0 && index < _nodes.size());
     return _nodes[index];
+  }
+
+  // get the root node of the tree
+  const node_t &root() const {
+    assert(_root != invalid_index);
+    return _nodes[_root];
+  }
+
+  bool empty() const {
+    return _root == invalid_index;
   }
 
   // this is the growth size for fat aabbs (they will be expanded by this)
