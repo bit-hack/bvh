@@ -82,7 +82,7 @@ void draw_node(const bvh::node_t &node) {
     rect(node.aabb, 0x00ff00);
   }
   else {
-    rect(node.aabb, 0x808080);
+    rect(node.aabb, 0x406080);
   }
   if (node.child[0] != bvh::invalid_index) {
     const auto &a = uut.get(node.child[0]);
@@ -135,10 +135,20 @@ int main(int argc, char **args) {
       move_volume(i);
     }
 
+    uut.optimize();
+
     // draw the bvh
     if (!uut.empty()) {
       const auto &node = uut.root();
       draw_node(node);
+    }
+
+    const bvh::aabb_t aabb = { 128, 128, 256, 256 };
+    rect(aabb, 0x0000ff);
+    std::vector<bvh::index_t> query;
+    uut.find_overlaps(aabb, query);
+    for (bvh::index_t i : query) {
+      rect(uut.get(i).aabb, 0xFFFFFF);
     }
 
     SDL_Flip(screen);

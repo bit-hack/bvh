@@ -3,10 +3,9 @@
 #include "bvh.h"
 
 // todo:
-// - if sibbling aabb trees dont intersect then they are islands and their
-//   children cant collide.
 // - use vector instead of array to allow resizing
-// - add rotations
+// - add node rotations
+// - resolve all overlapping pairs
 
 #define VALIDATE 1
 
@@ -26,7 +25,7 @@ void bvh_t::clear() {
 }
 
 bool bvh_t::_is_leaf(index_t index) const {
-  return get(index).child[0] == invalid_index;
+  return get(index).is_leaf();
 }
 
 index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
@@ -272,6 +271,155 @@ void bvh_t::_validate(index_t index) {
     _validate(node.child[0]);
     _validate(node.child[1]);
   }
+}
+
+void bvh_t::optimize() {
+  _optimize(_root);
+}
+
+void bvh_t::_optimize(index_t i) {
+  if (i == invalid_index) {
+    return;
+  }
+  node_t &n = _get(i);
+#if 0
+  // optimize all nodes in the tree
+  if (n.child[0] != invalid_index) {
+    _optimize(n.child[0]);
+  }
+  if (n.child[1] != invalid_index) {
+    _optimize(n.child[1]);
+  }
+#else
+  // random walk down the tree
+  if (rand() & 0x80) {
+    _optimize(n.child[0]);
+  }
+  else {
+    _optimize(n.child[1]);
+  }
+#endif
+  _optimize(n);
+}
+
+void bvh_t::_optimize(node_t &node) {
+
+  // config a (start):
+  //
+  //        n
+  //   c0       c1
+  // x0  x1   x2  x3
+  //
+  // config b:                config c:
+  //
+  //        n                        n
+  //   c0       c1              c0       c1
+  // x0  x2   x1  x3          x0  x3   x2  x1
+
+  // gen 1
+  const auto c0i = node.child[0];
+  const auto c1i = node.child[1];
+  if (c0i == invalid_index ||
+      c1i == invalid_index) {
+    return;
+  }
+  auto &c0 = _get(node.child[0]);
+  auto &c1 = _get(node.child[1]);
+
+  // gen 2
+  const auto x0i = c0.child[0];
+  const auto x1i = c0.child[1];
+  const auto x2i = c1.child[0];
+  const auto x3i = c1.child[1];
+  if (x0i == invalid_index ||
+      x1i == invalid_index ||
+      x2i == invalid_index ||
+      x3i == invalid_index) {
+    return;
+  }
+  auto &x0 = _get(c0.child[0]);
+  auto &x1 = _get(c0.child[1]);
+  auto &x2 = _get(c1.child[0]);
+  auto &x3 = _get(c1.child[1]);
+
+  // original
+  const float a = aabb_t::find_union(x0.aabb, x1.aabb).area() +
+                  aabb_t::find_union(x2.aabb, x3.aabb).area();
+  // configuration b
+  const float b = aabb_t::find_union(x0.aabb, x2.aabb).area() +
+                  aabb_t::find_union(x1.aabb, x3.aabb).area();
+  // configuration c
+  const float c = aabb_t::find_union(x0.aabb, x3.aabb).area() + 
+                  aabb_t::find_union(x2.aabb, x1.aabb).area();
+
+  bool recalc = false;
+
+  if (b < c && b < a) {
+    // rotate to config b
+    _get(c0.child[1]).parent = c1i;
+    _get(c1.child[0]).parent = c0i;
+    std::swap(c0.child[1], c1.child[0]);
+    // recalculate aabb
+    c0.aabb = aabb_t::find_union(x0.aabb, x2.aabb);
+    c1.aabb = aabb_t::find_union(x1.aabb, x3.aabb);
+    recalc = true;
+  }
+  if (c < b && c < a) {
+    // rotate to config c
+    _get(c0.child[1]).parent = c1i;
+    _get(c1.child[1]).parent = c0i;
+    std::swap(c0.child[1], c1.child[1]);
+    // recalculate aabb
+    c0.aabb = aabb_t::find_union(x0.aabb, x3.aabb);
+    c1.aabb = aabb_t::find_union(x2.aabb, x1.aabb);
+    recalc = true;
+  }
+
+  // if we transformed the nodes, work back up the tree recomputing the aabbs
+  // until we hit the root node
+  if (recalc) {
+    index_t n = c0.parent;
+    while (n != invalid_index) {
+      node_t &x = _get(n);
+      // recalculate aabb
+      x.aabb = aabb_t::find_union(
+        _get(x.child[0]).aabb,
+        _get(x.child[1]).aabb);
+      // move up the tree
+      n = x.parent;
+    }
+  }
+}
+
+// find all overlaps with a given bounding-box
+void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
+  std::vector<index_t> stack;
+  if (_root != invalid_index) {
+    stack.push_back(_root);
+  }
+  while (!stack.empty()) {
+    // pop one node
+    const index_t ni = stack.back();
+    assert(ni != invalid_index);
+    const node_t &n = _get(ni);
+    stack.resize(stack.size() - 1);
+    // if these aabbs overlap
+    if (aabb_t::overlaps(bb, n.aabb)) {
+      if (n.is_leaf()) {
+        overlaps.push_back(ni);
+      }
+      else {
+        assert(n.child[0] != invalid_index);
+        assert(n.child[1] != invalid_index);
+        stack.push_back(n.child[0]);
+        stack.push_back(n.child[1]);
+      }
+    }
+  }
+}
+
+// find all overlaps with a given node
+void bvh_t::find_overlaps(index_t node, std::vector<index_t> &overlaps) {
 }
 
 } // namespace bvh

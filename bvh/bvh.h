@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <vector>
 
 
 namespace bvh {
@@ -21,6 +22,15 @@ struct aabb_t {
     const float dx = maxx - minx;
     const float dy = maxy - miny;
     return dx * dy;
+  }
+
+  // return true if two aabbs overlap
+  static bool overlaps(const aabb_t &a, const aabb_t &b) {
+    if (a.maxx < b.minx) return false;
+    if (a.minx > b.maxx) return false;
+    if (a.maxy < b.miny) return false;
+    if (a.miny > b.maxy) return false;
+    return true;
   }
 
   // find the union of two aabb
@@ -63,6 +73,11 @@ struct node_t {
 
   // user provided data
   void *user_data;
+
+  // query if this node is a neaf
+  bool is_leaf() const {
+    return child[0] == invalid_index;
+  }
 };
 
 struct bvh_t {
@@ -103,10 +118,24 @@ struct bvh_t {
     return _root == invalid_index;
   }
 
+  void optimize();
+
   // this is the growth size for fat aabbs (they will be expanded by this)
   float growth;
 
+  // find all overlaps with a given bounding-box
+  void find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps);
+
+  // find all overlaps with a given node
+  void find_overlaps(index_t node, std::vector<index_t> &overlaps);
+
 protected:
+
+  // optimize this subtree
+  void _optimize(index_t i);
+
+  // optimize the children of this node
+  void _optimize(node_t &node);
 
   // sanity checks for the tree
   void _validate(index_t index);
