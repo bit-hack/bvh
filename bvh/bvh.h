@@ -131,6 +131,9 @@ struct bvh_t {
 
 protected:
 
+  // walk up the tree recalculating the aabb
+  void _touched_aabb(index_t i);
+
   // optimize this subtree
   void _optimize(index_t i);
 

@@ -107,6 +107,10 @@ index_t bvh_t::_insert(index_t into, index_t node) {
     // no intermediate (return original)
     return into;
   }
+
+  // optimize on our way back up
+  assert(into != invalid_index);
+  _optimize(_get(into));
 }
 
 void bvh_t::remove(index_t index) {
@@ -117,7 +121,6 @@ void bvh_t::remove(index_t index) {
   node.child[0] = _free_list;
   node.child[1] = invalid_index;
   _free_list = index;
-
 #if VALIDATE
   _validate(_root);
 #endif
@@ -222,10 +225,24 @@ void bvh_t::_unlink(index_t index) {
   p1.child[p1c] = sib;
   _get(sib).parent = p0.parent;
 
+  // recalculate the remaining tree aabbs, p1 up
+  _touched_aabb(p0.parent);
+
   // free p0
   _free_node(node.parent);
   // node is now unlinked
   node.parent = invalid_index;
+}
+
+void bvh_t::_touched_aabb(index_t i) {
+  while (i != invalid_index) {
+    node_t &node = _get(i);
+    assert(!node.is_leaf());
+    assert(node.child[0] != invalid_index);
+    assert(node.child[1] != invalid_index);
+    node.aabb = aabb_t::find_union(_child(i, 0).aabb, _child(i, 1).aabb);
+    i = node.parent;
+  }
 }
 
 void bvh_t::_free_node(index_t index) {
@@ -270,6 +287,8 @@ void bvh_t::_validate(index_t index) {
     // validate child nodes
     _validate(node.child[0]);
     _validate(node.child[1]);
+
+    // XXX: check area of aabb is minimal?
   }
 }
 
@@ -304,90 +323,67 @@ void bvh_t::_optimize(index_t i) {
 
 void bvh_t::_optimize(node_t &node) {
 
-  // config a (start):
+  // four possible rotations
   //
-  //        n
-  //   c0       c1
-  // x0  x1   x2  x3
+  //        n                   n
+  //   c0       c1         c0      *x0
+  // x0  x1             *c1  x1
   //
-  // config b:                config c:
+  //        n                   n
+  //   c0       c1         c0      *x1
+  // x0  x1              x0 *c1
   //
-  //        n                        n
-  //   c0       c1              c0       c1
-  // x0  x2   x1  x3          x0  x3   x2  x1
+  // same as above but with c0 and c1 roles swapped
 
-  // gen 1
-  const auto c0i = node.child[0];
-  const auto c1i = node.child[1];
-  if (c0i == invalid_index ||
-      c1i == invalid_index) {
-    return;
-  }
-  auto &c0 = _get(node.child[0]);
-  auto &c1 = _get(node.child[1]);
+  for (int i = 0; i < 2; ++i) {
 
-  // gen 2
-  const auto x0i = c0.child[0];
-  const auto x1i = c0.child[1];
-  const auto x2i = c1.child[0];
-  const auto x3i = c1.child[1];
-  if (x0i == invalid_index ||
-      x1i == invalid_index ||
-      x2i == invalid_index ||
-      x3i == invalid_index) {
-    return;
-  }
-  auto &x0 = _get(c0.child[0]);
-  auto &x1 = _get(c0.child[1]);
-  auto &x2 = _get(c1.child[0]);
-  auto &x3 = _get(c1.child[1]);
-
-  // original
-  const float a = aabb_t::find_union(x0.aabb, x1.aabb).area() +
-                  aabb_t::find_union(x2.aabb, x3.aabb).area();
-  // configuration b
-  const float b = aabb_t::find_union(x0.aabb, x2.aabb).area() +
-                  aabb_t::find_union(x1.aabb, x3.aabb).area();
-  // configuration c
-  const float c = aabb_t::find_union(x0.aabb, x3.aabb).area() + 
-                  aabb_t::find_union(x2.aabb, x1.aabb).area();
-
-  bool recalc = false;
-
-  if (b < c && b < a) {
-    // rotate to config b
-    _get(c0.child[1]).parent = c1i;
-    _get(c1.child[0]).parent = c0i;
-    std::swap(c0.child[1], c1.child[0]);
-    // recalculate aabb
-    c0.aabb = aabb_t::find_union(x0.aabb, x2.aabb);
-    c1.aabb = aabb_t::find_union(x1.aabb, x3.aabb);
-    recalc = true;
-  }
-  if (c < b && c < a) {
-    // rotate to config c
-    _get(c0.child[1]).parent = c1i;
-    _get(c1.child[1]).parent = c0i;
-    std::swap(c0.child[1], c1.child[1]);
-    // recalculate aabb
-    c0.aabb = aabb_t::find_union(x0.aabb, x3.aabb);
-    c1.aabb = aabb_t::find_union(x2.aabb, x1.aabb);
-    recalc = true;
-  }
-
-  // if we transformed the nodes, work back up the tree recomputing the aabbs
-  // until we hit the root node
-  if (recalc) {
-    index_t n = c0.parent;
-    while (n != invalid_index) {
-      node_t &x = _get(n);
-      // recalculate aabb
-      x.aabb = aabb_t::find_union(
-        _get(x.child[0]).aabb,
-        _get(x.child[1]).aabb);
-      // move up the tree
-      n = x.parent;
+    // gen 1
+    const auto c0i = node.child[0];
+    const auto c1i = node.child[1];
+    if (c0i == invalid_index || c1i == invalid_index) {
+      return;
     }
+    auto &c0 = _get(node.child[0]);
+    auto &c1 = _get(node.child[1]);
+
+    // gen 2
+    const auto x0i = c0.child[0];
+    const auto x1i = c0.child[1];
+    if (x0i == invalid_index || x1i == invalid_index) {
+      // swap c0 and c1 and try again (rotations 3 and 4)
+      std::swap(node.child[0], node.child[1]);
+      continue;
+    }
+    auto &x0 = _get(c0.child[0]);
+    auto &x1 = _get(c0.child[1]);
+
+    // current
+    const float h0 = aabb_t::find_union(x0.aabb, x1.aabb).area() + c1.aabb.area();
+    // rotation 1
+    const aabb_t a1 = aabb_t::find_union(c1.aabb, x1.aabb);
+    const float h1 = a1.area() + x0.aabb.area();
+    // rotation 2
+    const aabb_t a2 = aabb_t::find_union(x0.aabb, c1.aabb);
+    const float h2 = a2.area() + x1.aabb.area();
+
+    if (h1 < h2 && h1 < h0) {
+      // do rotation 1 (swap x0/c1)
+      c1.parent = c0i;
+      x0.parent = c0.parent;
+      std::swap(c0.child[0], node.child[1]); // x0 and c1
+      c0.aabb = a1;
+    }
+
+    if (h2 < h1 && h2 < h0) {
+      // do rotation 2 (swap x1/c1)
+      c1.parent = c0i;
+      x1.parent = c0.parent;
+      std::swap(c0.child[1], node.child[1]); // x1 and c1
+      c0.aabb = a2;
+    }
+
+    // swap c0 and c1 and try again (rotations 3 and 4)
+    std::swap(node.child[0], node.child[1]);
   }
 }
 
