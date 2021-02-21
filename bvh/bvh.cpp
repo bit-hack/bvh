@@ -4,12 +4,36 @@
 
 // todo:
 // - use vector instead of array to allow resizing
-// - add node rotations
-// - resolve all overlapping pairs
 
+// enable to validate the tree after every operation
 #define VALIDATE 1
 
+
+namespace {
+
+// line segment aabb intersection test
+bool raycast(float ax, float ay, float bx, float by, const bvh::aabb_t &aabb) {
+  static const float EPSILON = 0.0001f;
+  const float dx = (bx - ax) * .5f;
+  const float dy = (by - ay) * .5f;
+  const float ex = (aabb.maxx - aabb.minx) * .5f;
+  const float ey = (aabb.maxy - aabb.miny) * .5f;
+  const float cx = ax + dx - (aabb.minx + aabb.maxx) * .5f;
+  const float cy = ay + dy - (aabb.miny + aabb.maxy) * .5f;
+  const float adx = fabsf(dx);
+  const float ady = fabsf(dy);
+  if (fabsf(cx) > (ex + adx)) return false;
+  if (fabsf(cy) > (ey + ady)) return false;
+  return (fabsf(dx * cy - dy * cx) <= (ex * ady + ey * adx + EPSILON));
+}
+
+}  // namespace {}
+
 namespace bvh {
+
+bool aabb_t::raycast(float x0, float y0, float x1, float y1) const {
+  return ::raycast(x0, y0, x1, y1, *this);
+}
 
 bvh_t::bvh_t()
   : growth(16.f)
@@ -294,6 +318,9 @@ void bvh_t::_validate(index_t index) {
 
 void bvh_t::optimize() {
   _optimize(_root);
+#if VALIDATE
+  _validate(_root);
+#endif
 }
 
 void bvh_t::_optimize(index_t i) {
@@ -301,15 +328,6 @@ void bvh_t::_optimize(index_t i) {
     return;
   }
   node_t &n = _get(i);
-#if 0
-  // optimize all nodes in the tree
-  if (n.child[0] != invalid_index) {
-    _optimize(n.child[0]);
-  }
-  if (n.child[1] != invalid_index) {
-    _optimize(n.child[1]);
-  }
-#else
   // random walk down the tree
   if (rand() & 0x80) {
     _optimize(n.child[0]);
@@ -317,7 +335,6 @@ void bvh_t::_optimize(index_t i) {
   else {
     _optimize(n.child[1]);
   }
-#endif
   _optimize(n);
 }
 
@@ -387,7 +404,6 @@ void bvh_t::_optimize(node_t &node) {
   }
 }
 
-// find all overlaps with a given bounding-box
 void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
   std::vector<index_t> stack;
   if (_root != invalid_index) {
@@ -414,8 +430,36 @@ void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
   }
 }
 
-// find all overlaps with a given node
 void bvh_t::find_overlaps(index_t node, std::vector<index_t> &overlaps) {
+  const node_t &n = _get(node);
+  find_overlaps(n.aabb, overlaps);
+}
+
+void bvh_t::raycast(float x0, float y0, float x1, float y1,
+                    std::vector<index_t> &overlaps) {
+  std::vector<index_t> stack;
+  if (_root != invalid_index) {
+    stack.push_back(_root);
+  }
+  while (!stack.empty()) {
+    // pop one node
+    const index_t ni = stack.back();
+    assert(ni != invalid_index);
+    const node_t &n = _get(ni);
+    stack.resize(stack.size() - 1);
+    // if the ray and aabb overlap
+    if (::raycast(x0, y0, x1, y1, n.aabb)) {
+      if (n.is_leaf()) {
+        overlaps.push_back(ni);
+      }
+      else {
+        assert(n.child[0] != invalid_index);
+        assert(n.child[1] != invalid_index);
+        stack.push_back(n.child[0]);
+        stack.push_back(n.child[1]);
+      }
+    }
+  }
 }
 
 } // namespace bvh

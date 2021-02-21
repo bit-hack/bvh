@@ -101,6 +101,21 @@ void move_volume(bvh::index_t vol) {
   uut.move(vol, b->aabb());
 }
 
+void draw_line(float x0, float y0, float x1, float y1, uint32_t rgb) {
+  // yeah I know this is horrible, but I was in a rush :D
+  const float midx = (x0 + x1) * .5f;
+  const float midy = (y0 + y1) * .5f;
+  const float dx = x1 - x0;
+  const float dy = y1 - y0;
+  if (dx * dx + dy * dy > 4.f) {
+    draw_line(x0, y0, midx, midy, rgb);
+    draw_line(midx, midy, x1, y1, rgb);
+  }
+  else {
+    plot(int(midx), int(midy), rgb);
+  }
+}
+
 int main(int argc, char **args) {
 
   if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -143,10 +158,18 @@ int main(int argc, char **args) {
       draw_node(node);
     }
 
-    const bvh::aabb_t aabb = { 128, 128, 256, 256 };
-    rect(aabb, 0x0000ff);
+    const bvh::aabb_t aabb = { 128, 128, 256, 192 };
     std::vector<bvh::index_t> query;
+    rect(aabb, 0x0000ff);
     uut.find_overlaps(aabb, query);
+
+    const float sx0 = 256;
+    const float sy0 = 294;
+    const float sx1 = 512;
+    const float sy1 = 490;
+    uut.raycast(sx0, sy0, sx1, sy1, query);
+    draw_line(sx0, sy0, sx1, sy1, 0xff0000);
+
     for (bvh::index_t i : query) {
       rect(uut.get(i).aabb, 0xFFFFFF);
     }

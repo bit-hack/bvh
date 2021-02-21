@@ -18,6 +18,8 @@ struct aabb_t {
   // upper bound
   float maxx, maxy;
 
+  bool raycast(float x0, float y0, float x1, float y1) const;
+
   float area() const {
     const float dx = maxx - minx;
     const float dy = maxy - miny;
@@ -98,13 +100,13 @@ struct bvh_t {
 
   // return a nodes user data
   void *user_data(index_t index) const {
-    assert(index >= 0 && index < _nodes.size());
+    assert(index >= 0 && index < index_t(_nodes.size()));
     return _nodes[index].user_data;
   }
 
   // get a node from the tree
   const node_t &get(index_t index) const {
-    assert(index >= 0 && index < _nodes.size());
+    assert(index >= 0 && index < index_t(_nodes.size()));
     return _nodes[index];
   }
 
@@ -128,6 +130,11 @@ struct bvh_t {
 
   // find all overlaps with a given node
   void find_overlaps(index_t node, std::vector<index_t> &overlaps);
+
+  // find all overlaps with a line segment
+  void raycast(float x0, float y0,
+               float x1, float y1,
+               std::vector<index_t> &overlaps);
 
 protected:
 
