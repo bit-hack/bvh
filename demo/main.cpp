@@ -11,12 +11,20 @@
 SDL_Surface *screen = nullptr;
 bvh::bvh_t uut;
 
+static uint64_t random() {
+  static uint64_t x = 12345;
+  x ^= x >> 12; // a
+  x ^= x << 25; // b
+  x ^= x >> 27; // c
+  return x * 0x2545F4914F6CDD1DULL;
+}
+
 static inline float randf() {
-  return float(rand()) / float(RAND_MAX);
+  return float(random() & 0xffff) / float(0xffff);
 }
 
 static inline float randf(float val) {
-  return val * float(rand()) / float(RAND_MAX);
+  return val * float(random() & 0xffff) / float(0xffff);
 }
 
 struct bounce_t {
@@ -118,6 +126,8 @@ void draw_line(float x0, float y0, float x1, float y1, uint32_t rgb) {
 
 int main(int argc, char **args) {
 
+  uint32_t frame = 0;
+
   if (SDL_Init(SDL_INIT_VIDEO) != 0) {
     return 1;
   }
@@ -127,9 +137,9 @@ int main(int argc, char **args) {
     return 1;
   }
 
-  std::array<bvh::index_t, 16> indices;
-  std::array<bounce_t, 16> bounce;
-  for (int i = 0; i < 16; ++i) {
+  std::array<bvh::index_t, 32> indices;
+  std::array<bounce_t, 32> bounce;
+  for (int i = 0; i < indices.size(); ++i) {
     bounce[i].make();
     indices[i] = uut.insert(bounce[i].aabb(), &bounce[i]);
   }
@@ -174,8 +184,13 @@ int main(int argc, char **args) {
       rect(uut.get(i).aabb, 0xFFFFFF);
     }
 
+    if (frame % 100) {
+      printf("%f\n", uut.quality() / 10000);
+    }
+
     SDL_Flip(screen);
-    SDL_Delay(1);
+    SDL_Delay(10);
+    ++frame;
   }
 
   return 0;

@@ -136,7 +136,15 @@ struct bvh_t {
                float x1, float y1,
                std::vector<index_t> &overlaps);
 
+  // return a quality metric for this tree
+  float quality() const {
+    return _quality(_root);
+  }
+
 protected:
+
+  // return a quality metric for this subtree
+  float _quality(index_t) const;
 
   // walk up the tree recalculating the aabb
   void _touched_aabb(index_t i);
@@ -162,6 +170,12 @@ protected:
 
   // access a node by index
   node_t &_get(index_t index) {
+    assert(index != invalid_index);
+    return _nodes[index];
+  }
+
+  // access a node by index
+  const node_t &_get(index_t index) const {
     assert(index != invalid_index);
     return _nodes[index];
   }

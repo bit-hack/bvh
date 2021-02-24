@@ -52,6 +52,36 @@ bool bvh_t::_is_leaf(index_t index) const {
   return get(index).is_leaf();
 }
 
+// return a quality metric for this subtree
+float bvh_t::_quality(index_t n) const {
+  if (n == invalid_index) {
+    return 0.f;
+  }
+  const node_t &node = _get(n);
+  if (node.is_leaf()) {
+    return 0.f;
+  }
+  // cost metric is the sum of the surface area of all interior nodes (non root or leaf)
+  return ((n == _root) ? 0.f : node.aabb.area()) +
+    _quality(node.child[0]) +
+    _quality(node.child[1]);
+}
+
+#if 0
+index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
+
+  // XXX: use the branch and bound insertion method which needs a priority queue to work properly
+
+
+  return 0;
+}
+
+index_t bvh_t::_insert(index_t into, index_t node) {
+  // XXX: this will be redundant
+  assert(!"Dont call me please");
+  return invalid_index;
+}
+#else
 index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
 
   // 1. create a node
@@ -136,6 +166,7 @@ index_t bvh_t::_insert(index_t into, index_t node) {
   assert(into != invalid_index);
   _optimize(_get(into));
 }
+#endif
 
 void bvh_t::remove(index_t index) {
   assert(index != invalid_index);
@@ -360,8 +391,8 @@ void bvh_t::_optimize(node_t &node) {
     if (c0i == invalid_index || c1i == invalid_index) {
       return;
     }
-    auto &c0 = _get(node.child[0]);
-    auto &c1 = _get(node.child[1]);
+    auto &c0 = _get(c0i);
+    auto &c1 = _get(c1i);
 
     // gen 2
     const auto x0i = c0.child[0];
@@ -371,11 +402,11 @@ void bvh_t::_optimize(node_t &node) {
       std::swap(node.child[0], node.child[1]);
       continue;
     }
-    auto &x0 = _get(c0.child[0]);
-    auto &x1 = _get(c0.child[1]);
+    auto &x0 = _get(x0i);
+    auto &x1 = _get(x1i);
 
     // current
-    const float h0 = aabb_t::find_union(x0.aabb, x1.aabb).area() + c1.aabb.area();
+    const float h0 = c0.aabb.area() + c1.aabb.area();
     // rotation 1
     const aabb_t a1 = aabb_t::find_union(c1.aabb, x1.aabb);
     const float h1 = a1.area() + x0.aabb.area();
