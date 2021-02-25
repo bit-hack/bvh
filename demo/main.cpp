@@ -139,7 +139,7 @@ int main(int argc, char **args) {
 
   std::array<bvh::index_t, 32> indices;
   std::array<bounce_t, 32> bounce;
-  for (int i = 0; i < indices.size(); ++i) {
+  for (size_t i = 0; i < indices.size(); ++i) {
     bounce[i].make();
     indices[i] = uut.insert(bounce[i].aabb(), &bounce[i]);
   }
@@ -160,7 +160,7 @@ int main(int argc, char **args) {
       move_volume(i);
     }
 
-    uut.optimize();
+//    uut.optimize();
 
     // draw the bvh
     if (!uut.empty()) {

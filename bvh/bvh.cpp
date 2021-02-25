@@ -67,28 +67,24 @@ float bvh_t::_quality(index_t n) const {
     _quality(node.child[1]);
 }
 
-#if 0
-index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
-
-  // XXX: use the branch and bound insertion method which needs a priority queue to work properly
-
-
-  return 0;
+index_t bvh_t::_insert_into_leaf(index_t leaf, index_t node) {
+  assert(_is_leaf(leaf));
+  // create new internal node
+  index_t inter = _new_node();
+  // insert children
+  _get(inter).child[0] = leaf;
+  _get(inter).child[1] = node;
+  // keep track of the parents
+  _get(inter).parent = invalid_index;  // fixed up by callee
+  _get(leaf).parent = inter;
+  _get(node).parent = inter;
+  // recalculate the aabb on way up
+  _get(inter).aabb = aabb_t::find_union(_get(leaf).aabb, _get(node).aabb);
+  // new child is the intermediate node
+  return inter;
 }
 
-index_t bvh_t::_insert(index_t into, index_t node) {
-  // XXX: this will be redundant
-  assert(!"Dont call me please");
-  return invalid_index;
-}
-#else
 index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
-
-  // 1. create a node
-  //    . calc fat aabb
-  // 2. start at root node
-  //    . bubble down to leaf minimising node area
-
   // create the new node
   index_t index = _new_node();
   assert(index != invalid_index);
@@ -102,8 +98,21 @@ index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
   node.child[0] = invalid_index;
   node.child[1] = invalid_index;
   // insert into the tree
+#if BRANCH_AND_BOUND
+  if (_root == invalid_index) {
+    _root = index;
+    return index;
+  }
+  if (_is_leaf(_root)) {
+    _root = _insert_into_leaf(_root, index);
+    _validate(_root);
+    return index;
+  }
+  _insert(index);
+#else
   _root = (_root == invalid_index) ? index : _insert(_root, index);
   _get(_root).parent = invalid_index;
+#endif
 #if VALIDATE
   _validate(_root);
 #endif
@@ -111,60 +120,100 @@ index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
   return index;
 }
 
+#if BRANCH_AND_BOUND
+void bvh_t::_insert(index_t node) {
+  const aabb_t &aabb = _get(node).aabb;
+
+  struct search_t { index_t index; float cost; };
+  std::vector<search_t> stack;
+
+  if (_root != invalid_index) {
+    stack.push_back(search_t{ _root, 0.f } );
+  }
+
+  float best_cost = INFINITY;
+  index_t best_index = invalid_index;
+
+  while (!stack.empty()) {
+    // pop one node
+    const search_t s = stack.back();
+    const node_t &n = _get(s.index);
+    stack.resize(stack.size() - 1);
+    // find the cost for inserting into this node
+    const aabb_t uni = aabb_t::find_union(aabb, n.aabb);
+    const float growth = uni.area() - n.aabb.area();
+    assert(growth >= 0.f);
+    const float cost = s.cost + growth;
+    // skip the entire subtree if we know we have a better choice
+    if (cost >= best_cost) {
+      continue;
+    }
+
+    if (n.is_leaf()) {
+      best_cost = cost;
+      best_index = s.index;
+    }
+    else {
+      assert(n.child[0] != invalid_index);
+      assert(n.child[1] != invalid_index);
+      stack.push_back(search_t{ n.child[0], cost });
+      stack.push_back(search_t{ n.child[1], cost });
+    }
+  }
+  // insert into the best node we found
+  assert(best_index != invalid_index);
+  const node_t &x = _get(best_index);
+  index_t parent = x.parent;
+  index_t inter = _insert_into_leaf(best_index, node);
+  _get(inter).parent = parent;
+  // recalculate aabb and optimize on the way up
+  while (parent != invalid_index) {
+    node_t &y = _get(parent);
+    y.aabb = aabb_t::find_union(_get(y.child[0]).aabb, _get(y.child[1]).aabb);
+//    _optimize(y);
+    parent = y.parent;
+  }
+}
+#else
 // insert 'node' into 'into'
 index_t bvh_t::_insert(index_t into, index_t node) {
   assert(into != invalid_index);
   assert(node != invalid_index);
   // if we are inserting into a leaf
   if (_is_leaf(into)) {
-    // create new internal node
-    index_t inter = _new_node();
-    // insert children
-    _get(inter).child[0] = into;
-    _get(inter).child[1] = node;
-    // keep track of the parents
-    _get(inter).parent = invalid_index;  // fixed up by callee
-    _get(into).parent = inter;
-    _get(node).parent = inter;
-    // recalculate the aabb on way up
-    _get(inter).aabb = aabb_t::find_union(_get(into).aabb, _get(node).aabb);
-    // new child is the intermediate node
-    return inter;
-  }
-  else {
-    // this node should have two children already
-    assert(_get(into).child[0] != invalid_index &&
-           _get(into).child[1] != invalid_index);
-    {
-      // calculate new area if inserted into each child
-      // child 0 + node
-      const auto &aabb_e0 = aabb_t::find_union(_child(into, 0).aabb, _get(node).aabb);
-      // child 1 + node
-      const auto &aabb_e1 = aabb_t::find_union(_child(into, 1).aabb, _get(node).aabb);
-      // insert to minimise overall surface area
-      // (child 0 + node) + (child 1)
-      const float sah_0 = aabb_e0.area() + _child(into, 1).aabb.area();
-      // (child 0) + (node + child 1)
-      const float sah_1 = aabb_e1.area() + _child(into, 0).aabb.area();
-      if (sah_0 <= sah_1) {
-        _get(into).child[0] = _insert(_get(into).child[0], node);
-        _child(into, 0).parent = into;
-      }
-      else {
-        _get(into).child[1] = _insert(_get(into).child[1], node);
-        _child(into, 1).parent = into;
-      }
-    }
-    // recalculate the parent aabb on way up
-    _get(into).aabb = aabb_t::find_union(_child(into, 0).aabb,
-                                         _child(into, 1).aabb);
-    // no intermediate (return original)
-    return into;
+    return _insert_into_leaf(into, node);
   }
 
-  // optimize on our way back up
-  assert(into != invalid_index);
+  // this node should have two children already
+  assert(_get(into).child[0] != invalid_index &&
+          _get(into).child[1] != invalid_index);
+  {
+    // calculate new area if inserted into each child
+    // child 0 + node
+    const auto &aabb_e0 = aabb_t::find_union(_child(into, 0).aabb, _get(node).aabb);
+    // child 1 + node
+    const auto &aabb_e1 = aabb_t::find_union(_child(into, 1).aabb, _get(node).aabb);
+    // insert to minimise overall surface area
+    // (child 0 + node) + (child 1)
+    const float sah_0 = aabb_e0.area() + _child(into, 1).aabb.area();
+    // (child 0) + (node + child 1)
+    const float sah_1 = aabb_e1.area() + _child(into, 0).aabb.area();
+    if (sah_0 <= sah_1) {
+      _get(into).child[0] = _insert(_get(into).child[0], node);
+      _child(into, 0).parent = into;
+    }
+    else {
+      _get(into).child[1] = _insert(_get(into).child[1], node);
+      _child(into, 1).parent = into;
+    }
+  }
+  // recalculate the parent aabb on way up
+  _get(into).aabb = aabb_t::find_union(_child(into, 0).aabb,
+                                        _child(into, 1).aabb);
+  // optimize nodes on the way out
   _optimize(_get(into));
+  // no intermediate (return original)
+  return into;
 }
 #endif
 
@@ -195,8 +244,19 @@ void bvh_t::move(index_t index, const aabb_t &aabb) {
   // save the fat version of this aabb
   node.aabb = aabb_t::grow(aabb, growth);
   // insert into the tree
+#if BRANCH_AND_BOUND
+  if (_root == invalid_index) {
+    _root = index;
+    return;
+  }
+  if (_is_leaf(_root)) {
+    _root = _insert_into_leaf(_root, index);
+  }
+  _insert(index);
+#else
   _root = (_root == invalid_index) ? index : _insert(_root, index);
   _get(_root).parent = invalid_index;
+#endif
 #if VALIDATE
   _validate(_root);
 #endif
@@ -371,6 +431,10 @@ void bvh_t::_optimize(index_t i) {
 
 void bvh_t::_optimize(node_t &node) {
 
+#if VALIDATE
+  const float before = quality();
+#endif
+
   // four possible rotations
   //
   //        n                   n
@@ -405,34 +469,55 @@ void bvh_t::_optimize(node_t &node) {
     auto &x0 = _get(x0i);
     auto &x1 = _get(x1i);
 
+    // note: this heuristic only looks at minimizing the area of c0
+    //       which is all that is affected by these rotations
+
     // current
-    const float h0 = c0.aabb.area() + c1.aabb.area();
+    const float h0 = c0.aabb.area();
     // rotation 1
     const aabb_t a1 = aabb_t::find_union(c1.aabb, x1.aabb);
-    const float h1 = a1.area() + x0.aabb.area();
+    const float h1 = a1.area();
     // rotation 2
     const aabb_t a2 = aabb_t::find_union(x0.aabb, c1.aabb);
-    const float h2 = a2.area() + x1.aabb.area();
+    const float h2 = a2.area();
 
-    if (h1 < h2 && h1 < h0) {
-      // do rotation 1 (swap x0/c1)
-      c1.parent = c0i;
-      x0.parent = c0.parent;
-      std::swap(c0.child[0], node.child[1]); // x0 and c1
-      c0.aabb = a1;
+    if (h1 < h2) {
+      if (h1 < h0) {
+        // do rotation 1 (swap x0/c1)
+        //        n                   n
+        //   c0       c1  ->     c0      *x0
+        // x0  x1             *c1  x1
+        //
+        c1.parent = c0i;
+        x0.parent = c0.parent;
+        std::swap(c0.child[0], node.child[1]); // x0 and c1
+        c0.aabb = a1;
+        assert(c0.aabb.contains(c1.aabb));
+        assert(c0.aabb.contains(x1.aabb));
+      }
+    } else {
+      if (h2 < h0) {
+        // do rotation 2 (swap x1/c1)
+        //        n                   n
+        //   c0       c1  ->     c0      *x1
+        // x0  x1              x0 *c1
+        //
+        c1.parent = c0i;
+        x1.parent = c0.parent;
+        std::swap(c0.child[1], node.child[1]); // x1 and c1
+        c0.aabb = a2;
+        assert(c0.aabb.contains(x0.aabb));
+        assert(c0.aabb.contains(c1.aabb));
+      }
     }
-
-    if (h2 < h1 && h2 < h0) {
-      // do rotation 2 (swap x1/c1)
-      c1.parent = c0i;
-      x1.parent = c0.parent;
-      std::swap(c0.child[1], node.child[1]); // x1 and c1
-      c0.aabb = a2;
-    }
-
     // swap c0 and c1 and try again (rotations 3 and 4)
     std::swap(node.child[0], node.child[1]);
   }
+
+#if VALIDATE
+  const float after = quality();
+  assert(after - 1.f <= before);
+#endif
 }
 
 void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
@@ -445,6 +530,10 @@ void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
     const index_t ni = stack.back();
     assert(ni != invalid_index);
     const node_t &n = _get(ni);
+
+    // XXX: we can not resize here, and instead replace the poped node later instead
+    // of a push_back as a little optimisation
+
     stack.resize(stack.size() - 1);
     // if these aabbs overlap
     if (aabb_t::overlaps(bb, n.aabb)) {
