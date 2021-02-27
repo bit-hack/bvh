@@ -4,7 +4,7 @@
 #include <cassert>
 #include <vector>
 
-#define BRANCH_AND_BOUND 0
+#define BRANCH_AND_BOUND 1
 
 namespace bvh {
 
@@ -81,6 +81,16 @@ struct node_t {
   bool is_leaf() const {
     return child[0] == invalid_index;
   }
+
+  void replace_child(index_t prev, index_t with) {
+    if (child[0] == prev) {
+      child[0] = with;
+    }
+    else {
+      assert(child[1] == prev);
+      child[1] = with;
+    }
+  }
 };
 
 struct bvh_t {
@@ -143,6 +153,9 @@ struct bvh_t {
   }
 
 protected:
+
+  // bubble up tree recalculating aabbs
+  void _recalc_aabbs(index_t);
 
   // return a quality metric for this subtree
   float _quality(index_t) const;

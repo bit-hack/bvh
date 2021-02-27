@@ -120,6 +120,16 @@ index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
   return index;
 }
 
+void bvh_t::_recalc_aabbs(index_t i) {
+  // walk from leaf to root recalculating aabbs
+  while (i != invalid_index) {
+    node_t &y = _get(i);
+    y.aabb = aabb_t::find_union(_get(y.child[0]).aabb, _get(y.child[1]).aabb);
+    _optimize(y);
+    i = y.parent;
+  }
+}
+
 #if BRANCH_AND_BOUND
 void bvh_t::_insert(index_t node) {
   const aabb_t &aabb = _get(node).aabb;
@@ -160,19 +170,23 @@ void bvh_t::_insert(index_t node) {
       stack.push_back(search_t{ n.child[1], cost });
     }
   }
+
+  // XXX: tidy this up its gross
+
   // insert into the best node we found
   assert(best_index != invalid_index);
-  const node_t &x = _get(best_index);
-  index_t parent = x.parent;
-  index_t inter = _insert_into_leaf(best_index, node);
+  const node_t &best = _get(best_index);
+  assert(best.is_leaf());
+  const index_t parent = best.parent;
+  const index_t inter = _insert_into_leaf(best_index, node);
   _get(inter).parent = parent;
-  // recalculate aabb and optimize on the way up
-  while (parent != invalid_index) {
-    node_t &y = _get(parent);
-    y.aabb = aabb_t::find_union(_get(y.child[0]).aabb, _get(y.child[1]).aabb);
-//    _optimize(y);
-    parent = y.parent;
+  // fix up parent child relationship
+  if (parent != invalid_index) {
+    node_t &p = _get(parent);
+    p.replace_child(best_index, inter);
   }
+  // recalculate aabb and optimize on the way up
+  _recalc_aabbs(parent);
 }
 #else
 // insert 'node' into 'into'
