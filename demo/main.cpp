@@ -184,12 +184,12 @@ int main(int argc, char **args) {
       rect(uut.get(i).aabb, 0xFFFFFF);
     }
 
-    if (frame % 100) {
+    if (frame % 1000) {
       printf("%f\n", uut.quality() / 10000);
     }
 
     SDL_Flip(screen);
-    SDL_Delay(10);
+    SDL_Delay(1);
     ++frame;
   }
 

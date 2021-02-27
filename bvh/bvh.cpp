@@ -98,7 +98,6 @@ index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
   node.child[0] = invalid_index;
   node.child[1] = invalid_index;
   // insert into the tree
-#if BRANCH_AND_BOUND
   if (_root == invalid_index) {
     _root = index;
     return index;
@@ -109,10 +108,6 @@ index_t bvh_t::insert(const aabb_t &aabb, void *user_data) {
     return index;
   }
   _insert(index);
-#else
-  _root = (_root == invalid_index) ? index : _insert(_root, index);
-  _get(_root).parent = invalid_index;
-#endif
 #if VALIDATE
   _validate(_root);
 #endif
@@ -130,15 +125,17 @@ void bvh_t::_recalc_aabbs(index_t i) {
   }
 }
 
-#if BRANCH_AND_BOUND
-void bvh_t::_insert(index_t node) {
-  const aabb_t &aabb = _get(node).aabb;
-
+index_t bvh_t::_find_best_sibling(const aabb_t &aabb) const {
   struct search_t { index_t index; float cost; };
   std::vector<search_t> stack;
 
+  // XXX: can be optimized with a priority queue
+
+  // XXX: could also be optimized by node replacement rather then poping
+  // leading to less resizing
+
   if (_root != invalid_index) {
-    stack.push_back(search_t{ _root, 0.f } );
+    stack.push_back(search_t{ _root, 0.f });
   }
 
   float best_cost = INFINITY;
@@ -158,7 +155,6 @@ void bvh_t::_insert(index_t node) {
     if (cost >= best_cost) {
       continue;
     }
-
     if (n.is_leaf()) {
       best_cost = cost;
       best_index = s.index;
@@ -170,66 +166,33 @@ void bvh_t::_insert(index_t node) {
       stack.push_back(search_t{ n.child[1], cost });
     }
   }
+  // return the best leaf we cound find
+  return best_index;
+}
 
-  // XXX: tidy this up its gross
+void bvh_t::_insert(index_t node) {
 
-  // insert into the best node we found
-  assert(best_index != invalid_index);
-  const node_t &best = _get(best_index);
-  assert(best.is_leaf());
-  const index_t parent = best.parent;
-  const index_t inter = _insert_into_leaf(best_index, node);
+  // note: this insert phase assumes that there are at least two nodes already
+  //       in the tree and thus _root is a non leaf node.
+
+  // find the best sibling for node
+  const aabb_t &aabb = _get(node).aabb;
+  index_t sibi = _find_best_sibling(aabb);
+  assert(sibi != invalid_index);
+  // once the best leaf has been found we come to the insertion phase
+  const node_t &sib = _get(sibi);
+  assert(sib.is_leaf());
+  const index_t parent = sib.parent;
+  const index_t inter = _insert_into_leaf(sibi, node);
   _get(inter).parent = parent;
   // fix up parent child relationship
   if (parent != invalid_index) {
     node_t &p = _get(parent);
-    p.replace_child(best_index, inter);
+    p.replace_child(sibi, inter);
   }
   // recalculate aabb and optimize on the way up
   _recalc_aabbs(parent);
 }
-#else
-// insert 'node' into 'into'
-index_t bvh_t::_insert(index_t into, index_t node) {
-  assert(into != invalid_index);
-  assert(node != invalid_index);
-  // if we are inserting into a leaf
-  if (_is_leaf(into)) {
-    return _insert_into_leaf(into, node);
-  }
-
-  // this node should have two children already
-  assert(_get(into).child[0] != invalid_index &&
-          _get(into).child[1] != invalid_index);
-  {
-    // calculate new area if inserted into each child
-    // child 0 + node
-    const auto &aabb_e0 = aabb_t::find_union(_child(into, 0).aabb, _get(node).aabb);
-    // child 1 + node
-    const auto &aabb_e1 = aabb_t::find_union(_child(into, 1).aabb, _get(node).aabb);
-    // insert to minimise overall surface area
-    // (child 0 + node) + (child 1)
-    const float sah_0 = aabb_e0.area() + _child(into, 1).aabb.area();
-    // (child 0) + (node + child 1)
-    const float sah_1 = aabb_e1.area() + _child(into, 0).aabb.area();
-    if (sah_0 <= sah_1) {
-      _get(into).child[0] = _insert(_get(into).child[0], node);
-      _child(into, 0).parent = into;
-    }
-    else {
-      _get(into).child[1] = _insert(_get(into).child[1], node);
-      _child(into, 1).parent = into;
-    }
-  }
-  // recalculate the parent aabb on way up
-  _get(into).aabb = aabb_t::find_union(_child(into, 0).aabb,
-                                        _child(into, 1).aabb);
-  // optimize nodes on the way out
-  _optimize(_get(into));
-  // no intermediate (return original)
-  return into;
-}
-#endif
 
 void bvh_t::remove(index_t index) {
   assert(index != invalid_index);
@@ -258,7 +221,6 @@ void bvh_t::move(index_t index, const aabb_t &aabb) {
   // save the fat version of this aabb
   node.aabb = aabb_t::grow(aabb, growth);
   // insert into the tree
-#if BRANCH_AND_BOUND
   if (_root == invalid_index) {
     _root = index;
     return;
@@ -267,10 +229,6 @@ void bvh_t::move(index_t index, const aabb_t &aabb) {
     _root = _insert_into_leaf(_root, index);
   }
   _insert(index);
-#else
-  _root = (_root == invalid_index) ? index : _insert(_root, index);
-  _get(_root).parent = invalid_index;
-#endif
 #if VALIDATE
   _validate(_root);
 #endif
