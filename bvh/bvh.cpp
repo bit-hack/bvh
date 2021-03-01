@@ -2,14 +2,133 @@
 
 #include "bvh.h"
 
-// todo:
-// - use vector instead of array to allow resizing
-
 // enable to validate the tree after every operation
 #define VALIDATE 1
 
-
 namespace {
+// fixed size binary heap implementation
+template <typename type_t, size_t c_size>
+struct bin_heap_t {
+
+  // index of the root node
+  // to simplify the implementation, heap_ is base 1 (index 0 unused).
+  static const size_t c_root = 1;
+
+  bin_heap_t() : index_(c_root) {}
+
+  // pop the current best node in the heap (root node)
+  type_t pop() {
+    assert(!empty());
+    // save top most value for final return
+    type_t out = heap_[c_root];
+    // swap last and first and shrink by one
+    index_ -= 1;
+    std::swap(heap_[c_root], heap_[index_]);
+    // push down to correct position
+    bubble_down(c_root);
+    return out;
+  }
+
+  // push a new node into the heap and make rebalanced tree
+  void push(type_t node) {
+    assert(!full());
+    // insert node into end of list
+    size_t i = index_++;
+    heap_[i] = node;
+    bubble_up(i);
+  }
+
+  // return true if the heap is empty
+  bool empty() const {
+    return index_ <= 1;
+  }
+
+  // return true if the heap is full
+  bool full() const {
+    return index_ > c_size;
+  }
+
+  // number of nodes currently in the heap
+  size_t size() const {
+    return index_ - 1;
+  }
+
+  // wipe the heap back to its empty state
+  void clear() {
+    index_ = c_root;
+  }
+
+  // test that we have a valid binary heap
+  void validate() const {
+    for (size_t i = 2; i < index_; ++i) {
+      assert(compare(heap_[parent(i)], heap_[i]));
+    }
+  }
+
+  // discard a number of items from the bottom of the heap
+  void discard(size_t num) {
+    assert(index_ - num >= c_root);
+    index_ -= num;
+  }
+
+protected:
+  std::array<type_t, c_size + 1> heap_;
+  size_t index_;
+
+  // check an index points to a valid node
+  bool valid(size_t i) const {
+    return i < index_;
+  }
+
+  // compare two nodes
+  static bool inline compare(const type_t &a, const type_t &b) {
+    return a < b;
+  }
+
+  // bubble an item down to its correct place in the tree
+  inline void bubble_down(size_t i) {
+    // while we are not at a leaf
+    while (valid(child(i, 0))) {
+      // get both children
+      const size_t x = child(i, 0);
+      const size_t y = child(i, 1);
+      // select best child
+      const bool select = valid(y) && compare(heap_[y], heap_[x]);
+      type_t &best = select ? heap_[y] : heap_[x];
+      // quit if children are not better
+      if (!compare(best, heap_[i]))
+        break;
+      // swap current and child
+      std::swap(best, heap_[i]);
+      // repeat from child node
+      i = select ? y : x;
+    }
+  }
+
+  // bubble and item up to its correct place in the tree
+  inline void bubble_up(size_t i) {
+    // while not at the root node
+    while (i > c_root) {
+      const size_t j = parent(i);
+      // if node is better then parent
+      if (!compare(heap_[i], heap_[j]))
+        break;
+      std::swap(heap_[i], heap_[j]);
+      i = j;
+    }
+  }
+
+  // given an index, return the parent index
+  static constexpr inline size_t parent(size_t index) {
+    return index / 2;
+  }
+
+  // given an index, return one of the two child nodes (branch 0/1)
+  static constexpr inline size_t child(size_t index, uint32_t branch) {
+    assert(!(branch & ~1u));
+    return index * 2 + branch;
+  }
+};
 
 // line segment aabb intersection test
 bool raycast(float ax, float ay, float bx, float by, const bvh::aabb_t &aabb) {
@@ -126,26 +245,29 @@ void bvh_t::_recalc_aabbs(index_t i) {
 }
 
 index_t bvh_t::_find_best_sibling(const aabb_t &aabb) const {
-  struct search_t { index_t index; float cost; };
-  std::vector<search_t> stack;
 
-  // XXX: can be optimized with a priority queue
+  struct search_t {
+    index_t index;
+    float cost;
 
-  // XXX: could also be optimized by node replacement rather then poping
-  // leading to less resizing
+    bool operator < (const search_t &rhs) const {
+      return cost < rhs.cost;
+    }
+  };
+  // XXX: warning, fixed size here
+  bin_heap_t<search_t, 1024> pqueue;
 
   if (_root != invalid_index) {
-    stack.push_back(search_t{ _root, 0.f });
+    pqueue.push(search_t{ _root, 0.f });
   }
 
   float best_cost = INFINITY;
   index_t best_index = invalid_index;
 
-  while (!stack.empty()) {
-    // pop one node
-    const search_t s = stack.back();
+  while (!pqueue.empty()) {
+    // pop one node (lowest cost so far)
+    const search_t s = pqueue.pop();
     const node_t &n = _get(s.index);
-    stack.resize(stack.size() - 1);
     // find the cost for inserting into this node
     const aabb_t uni = aabb_t::find_union(aabb, n.aabb);
     const float growth = uni.area() - n.aabb.area();
@@ -162,8 +284,8 @@ index_t bvh_t::_find_best_sibling(const aabb_t &aabb) const {
     else {
       assert(n.child[0] != invalid_index);
       assert(n.child[1] != invalid_index);
-      stack.push_back(search_t{ n.child[0], cost });
-      stack.push_back(search_t{ n.child[1], cost });
+      pqueue.push(search_t{ n.child[0], cost });
+      pqueue.push(search_t{ n.child[1], cost });
     }
   }
   // return the best leaf we cound find
@@ -494,6 +616,7 @@ void bvh_t::_optimize(node_t &node) {
 
 void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
   std::vector<index_t> stack;
+  stack.reserve(128);
   if (_root != invalid_index) {
     stack.push_back(_root);
   }
@@ -503,10 +626,6 @@ void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
     assert(ni != invalid_index);
     const node_t &n = _get(ni);
 
-    // XXX: we can not resize here, and instead replace the poped node later instead
-    // of a push_back as a little optimisation
-
-    stack.resize(stack.size() - 1);
     // if these aabbs overlap
     if (aabb_t::overlaps(bb, n.aabb)) {
       if (n.is_leaf()) {
@@ -515,10 +634,13 @@ void bvh_t::find_overlaps(const aabb_t &bb, std::vector<index_t> &overlaps) {
       else {
         assert(n.child[0] != invalid_index);
         assert(n.child[1] != invalid_index);
-        stack.push_back(n.child[0]);
+        stack.back() = n.child[0];
         stack.push_back(n.child[1]);
+        continue;
       }
     }
+    // pop node from the stack
+    stack.resize(stack.size() - 1);
   }
 }
 
@@ -530,6 +652,7 @@ void bvh_t::find_overlaps(index_t node, std::vector<index_t> &overlaps) {
 void bvh_t::raycast(float x0, float y0, float x1, float y1,
                     std::vector<index_t> &overlaps) {
   std::vector<index_t> stack;
+  stack.reserve(128);
   if (_root != invalid_index) {
     stack.push_back(_root);
   }
@@ -538,7 +661,6 @@ void bvh_t::raycast(float x0, float y0, float x1, float y1,
     const index_t ni = stack.back();
     assert(ni != invalid_index);
     const node_t &n = _get(ni);
-    stack.resize(stack.size() - 1);
     // if the ray and aabb overlap
     if (::raycast(x0, y0, x1, y1, n.aabb)) {
       if (n.is_leaf()) {
@@ -547,10 +669,13 @@ void bvh_t::raycast(float x0, float y0, float x1, float y1,
       else {
         assert(n.child[0] != invalid_index);
         assert(n.child[1] != invalid_index);
-        stack.push_back(n.child[0]);
+        stack.back() = n.child[0];
         stack.push_back(n.child[1]);
+        continue;
       }
     }
+    // pop node
+    stack.resize(stack.size() - 1);
   }
 }
 

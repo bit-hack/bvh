@@ -185,7 +185,7 @@ int main(int argc, char **args) {
     }
 
     if (frame % 1000) {
-      printf("%f\n", uut.quality() / 10000);
+//      printf("%f\n", uut.quality() / 10000);
     }
 
     SDL_Flip(screen);
