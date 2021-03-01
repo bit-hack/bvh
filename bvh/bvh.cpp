@@ -501,28 +501,6 @@ void bvh_t::_validate(index_t index) {
   }
 }
 
-void bvh_t::optimize() {
-  _optimize(_root);
-#if VALIDATE
-  _validate(_root);
-#endif
-}
-
-void bvh_t::_optimize(index_t i) {
-  if (i == invalid_index) {
-    return;
-  }
-  node_t &n = _get(i);
-  // random walk down the tree
-  if (rand() & 0x80) {
-    _optimize(n.child[0]);
-  }
-  else {
-    _optimize(n.child[1]);
-  }
-  _optimize(n);
-}
-
 void bvh_t::_optimize(node_t &node) {
 
 #if VALIDATE

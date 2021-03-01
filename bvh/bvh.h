@@ -130,8 +130,6 @@ struct bvh_t {
     return _root == invalid_index;
   }
 
-  void optimize();
-
   // this is the growth size for fat aabbs (they will be expanded by this)
   float growth;
 
